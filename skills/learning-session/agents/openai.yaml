@@ -1,0 +1,4 @@
+interface:
+  display_name: "Learning Session"
+  short_description: "피처 목표와 사용자 학습 범위를 먼저 명확히 기록합니다"
+  default_prompt: "Use $learning-session to start a feature with explicit learning ownership."

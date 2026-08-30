@@ -1,0 +1,4 @@
+interface:
+  display_name: "Promote Feature to Book"
+  short_description: "검증된 피처 경험을 책 집필 증거 묶음으로 승격합니다"
+  default_prompt: "Use $promote-feature-to-book to turn verified feature evidence into a chapter candidate."

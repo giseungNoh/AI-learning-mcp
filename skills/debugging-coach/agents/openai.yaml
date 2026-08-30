@@ -1,0 +1,4 @@
+interface:
+  display_name: "Debugging Coach"
+  short_description: "가설과 검증 증거를 중심으로 디버깅 사고를 훈련합니다"
+  default_prompt: "Use $debugging-coach to help me debug through hypotheses and evidence."

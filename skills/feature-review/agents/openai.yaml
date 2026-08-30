@@ -1,0 +1,4 @@
+interface:
+  display_name: "Feature Review"
+  short_description: "피처 증거로 기여도와 기술 학습 내용을 검토합니다"
+  default_prompt: "Use $feature-review to review the active feature with compact evidence."

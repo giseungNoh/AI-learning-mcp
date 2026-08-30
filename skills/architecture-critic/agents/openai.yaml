@@ -1,0 +1,4 @@
+interface:
+  display_name: "Architecture Critic"
+  short_description: "현재 설계와 단순·확장 대안을 비판적으로 비교합니다"
+  default_prompt: "Use $architecture-critic to compare this design with simpler and scalable alternatives."
