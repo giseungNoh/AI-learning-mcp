@@ -31,6 +31,8 @@ def resolve_root(path: str | Path) -> Path:
         ["git", "-C", str(candidate), "rev-parse", "--show-toplevel"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=20,
         check=False,
     )
@@ -57,6 +59,8 @@ def _git(root: Path, *args: str, limit: int = 80_000) -> str:
         ["git", "-C", str(root), *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=20,
         check=False,
     )

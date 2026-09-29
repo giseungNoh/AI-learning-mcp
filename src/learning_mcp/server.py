@@ -99,7 +99,94 @@ def sync_codex_session(
     """
     [MCP Tool] Codex CLI 세션 로그(.jsonl)를 기능에 연동하고 소모된 토큰 사용량 차이(Delta)를 계산합니다.
     """
-    return service.sync_codex_session(feature_id, session_file, phase)
+    return service.request_session_sync(feature_id, session_file, phase)
+
+
+@mcp.tool()
+def capture_event(project_root: str, event_type: str, payload: dict,
+                  feature_id: str | None = None, source: str = "codex",
+                  fingerprint: str | None = None) -> dict:
+    """Store a small development event with optional deduplication fingerprint."""
+    return service.capture_event(project_root, event_type, payload, feature_id, source, fingerprint)
+
+
+@mcp.tool()
+def get_job_status(job_id: int) -> dict:
+    """Return the state of background work."""
+    with service.db.connect() as connection:
+        row = connection.execute("SELECT id, job_type, status, retry_count, error, finished_at "
+                                 "FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"unknown job: {job_id}")
+    return dict(row)
+
+
+@mcp.tool()
+def request_daily_review(project_root: str, review_date: str | None = None) -> dict:
+    """Queue a Gemini learning review for a project and local calendar date."""
+    return service.request_daily_review(project_root, review_date)
+
+
+@mcp.tool()
+def request_feature_review(feature_id: str) -> dict:
+    """Queue a structured review after the final Git snapshot exists."""
+    return service.request_feature_review(feature_id)
+
+
+@mcp.tool()
+def evaluate_decision_candidate(feature_id: str, description: str,
+                                architecture_related: bool = False, hard_to_reverse: bool = False,
+                                new_dependency: bool = False, affects_data_model: bool = False,
+                                concurrency_related: bool = False, repeated_weakness: bool = False,
+                                concept_id: str | None = None) -> dict:
+    """Evaluate an important design choice and return a user question when needed."""
+    return service.evaluate_decision_candidate(
+        feature_id, description, architecture_related=architecture_related,
+        hard_to_reverse=hard_to_reverse, new_dependency=new_dependency,
+        affects_data_model=affects_data_model, concurrency_related=concurrency_related,
+        repeated_weakness=repeated_weakness, concept_id=concept_id)
+
+
+@mcp.tool()
+def get_pending_questions(feature_id: str) -> list[dict]:
+    """Return unanswered design or teach-back questions for a feature."""
+    return service.get_pending_questions(feature_id)
+
+
+@mcp.tool()
+def record_user_answer(question_id: int, answer: str) -> dict:
+    """Save the user's reasoning as evidence and update a linked concept state."""
+    return service.record_user_answer(question_id, answer)
+
+
+@mcp.tool()
+def record_review_confirmation(feature_id: str, explanation: str) -> dict:
+    """Store the user's explanation before marking a feature review verified."""
+    return service.record_review_confirmation(feature_id, explanation)
+
+
+@mcp.tool()
+def get_learning_context(feature_id: str) -> dict:
+    """Return compact concept states and repeated verified weaknesses."""
+    return service.get_learning_context(feature_id)
+
+
+@mcp.tool()
+def record_concept_use(feature_id: str, concept_id: str, evidence_ref: str) -> dict:
+    """Link a concept to real feature evidence and advance its applied state across features."""
+    return service.record_concept_use(feature_id, concept_id, evidence_ref)
+
+
+@mcp.tool()
+def request_delayed_recall(feature_id: str, concept_id: str, days: int = 7) -> dict:
+    """Create a recall question after a prior user explanation has aged."""
+    return service.request_delayed_recall(feature_id, concept_id, days)
+
+
+@mcp.tool()
+def record_mastery_confirmation(feature_id: str, concept_id: str, explanation: str) -> dict:
+    """Confirm mastery after delayed recall and use in multiple features."""
+    return service.record_mastery_confirmation(feature_id, concept_id, explanation)
 
 
 @mcp.tool()
@@ -129,11 +216,13 @@ def save_feature_review(
     next_topics: list[str],
     verified: bool = False,
     export_to_obsidian: bool = True,
+    verification_ref: str | None = None,
 ) -> dict:
     """
     [MCP Tool] 기능 구현 완료 후 학습 회고/리뷰 데이터를 저장하고 선택적으로 Obsidian Vault로 내보냅니다.
     """
-    return service.save_feature_review(feature_id, summary, code_flow, ownership, alternatives, weaknesses, next_topics, verified, export_to_obsidian)
+    return service.save_feature_review(feature_id, summary, code_flow, ownership, alternatives,
+                                       weaknesses, next_topics, verified, export_to_obsidian, verification_ref)
 
 
 @mcp.tool()

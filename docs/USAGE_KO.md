@@ -207,11 +207,11 @@ finish_feature(feature_id="F-20260825-001")
 | `get_project_context` | 현재 경로를 Git 루트로 정규화하고 해당 프로젝트 활성 feature 조회 |
 | `record_decision` | 기술 선택과 대안 기록 |
 | `record_debug_attempt` | 증상·가설·검증·결과 기록 |
-| `sync_codex_session` | 대화 인덱스와 token delta 동기화 |
+| `sync_codex_session` | 대화 인덱스와 token delta 동기화 작업 예약 |
 | `get_feature_manifest` | 작은 리뷰 문맥과 evidence ref 조회 |
 | `get_evidence` | 선택한 diff·결정·디버깅·대화만 조회 |
 | `save_feature_review` | 기여도·흐름·대안·학습 주제 저장 |
-| `finish_feature` | session 최종 동기화 후 완료 |
+| `finish_feature` | Git 증거 저장과 session 최종 동기화 예약 후 완료 |
 | `get_learning_history` | 최근 리뷰와 반복 약점 상위 항목 조회 |
 
 Resource:

@@ -129,6 +129,9 @@ class LearningServiceTests(unittest.TestCase):
         self.assertEqual(len(evidence["items"]), 3)
         self.assertLessEqual(evidence["characters"], 4_000)
 
+        confirmation = self.service.record_review_confirmation(
+            feature_id, "I can explain the cumulative snapshot delta."
+        )
         saved = self.service.save_feature_review(
             feature_id=feature_id,
             summary="Token deltas are stored without double counting.",
@@ -144,6 +147,7 @@ class LearningServiceTests(unittest.TestCase):
             weaknesses=["token-accounting"],
             next_topics=["SQLite transactions"],
             verified=True,
+            verification_ref=confirmation["ref"],
         )
         self.assertTrue(saved["saved"])
         self.assertTrue((self.vault / saved["obsidian_path"]).is_file())

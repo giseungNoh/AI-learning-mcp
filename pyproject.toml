@@ -11,6 +11,7 @@ dependencies = [
 [project.scripts]
 learning-mcp = "learning_mcp.server:main"
 learning-mcp-cli = "learning_mcp.cli:main"
+learning-mcp-worker = "learning_mcp.worker:main"
 
 [build-system]
 requires = ["hatchling"]

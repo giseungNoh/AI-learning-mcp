@@ -1,5 +1,19 @@
 # Learning MCP
 
+## v2 적용 현황
+
+프로젝트 식별자는 Git 원격 주소(없으면 최초 커밋)를 기준으로 유지하고, 로컬 경로는 별칭으로 기록합니다. 기능 시작과 종료 시 Git 증거를 SQLite에 저장합니다. 종료 후에는 `git:feature-diff`, `git:commits`, `git:working-final`, `git:staged-final`, `git:untracked-final` 등의 ref로 당시 내용을 조회할 수 있습니다. 종료된 기능의 `diff:working`과 `diff:staged`는 현재 작업 트리를 읽지 않습니다.
+
+MCP의 `sync_codex_session`은 작업 ID를 즉시 반환합니다. 별도 터미널에서 `uv run learning-mcp-worker`를 실행해야 대화 동기화 작업이 처리됩니다. `get_job_status`로 진행 상태를 확인할 수 있고, `capture_event`는 중복 방지용 `fingerprint`를 받을 수 있습니다. CLI의 기존 `sync-codex` 명령은 직접 동기화 방식으로 남아 있습니다.
+
+기능 종료 시 Git 증거는 정확한 종료 시점을 보존하기 위해 호출 안에서 캡처합니다. `request_feature_review`와 `request_daily_review`는 Gemini 분석을 작업 큐에 넣습니다. Worker는 압축된 근거를 전달하고 JSON 응답의 구조와 근거 ref를 검증한 뒤, Python 코드로 리뷰와 Obsidian 노트를 저장합니다. `dev/daily`와 `dev/concepts`에 쓰는 생성 영역은 기존 사용자 메모를 보존합니다.
+
+실제 Gemini 분석에는 인증된 [Antigravity CLI `agy`](https://www.antigravity.google/docs/cli/headless/) 또는 [Gemini CLI](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/headless.md)가 필요합니다. `agy`가 있으면 기본적으로 Gemini 모델 `gemini-3.8-flash-medium`을 사용하며, `LEARNING_MCP_GEMINI_MODEL`로 바꿀 수 있습니다. 기본 실행 파일이 PATH에 없으면 `LEARNING_MCP_GEMINI_EXECUTABLE`, 백엔드 선택이 필요하면 `LEARNING_MCP_GEMINI_BACKEND=agy` 또는 `gemini`를 설정하세요. `LEARNING_MCP_OBSIDIAN_VAULT`도 본인 Vault 경로로 설정해야 실제 Vault에 저장됩니다.
+
+MCP 서버와 별도로 `uv run learning-mcp-worker`를 실행해야 합니다. `uv`가 없으면 프로젝트에서 `PYTHONPATH=src python -m learning_mcp.worker`로 실행할 수 있습니다(Windows PowerShell: `$env:PYTHONPATH='src'; python -m learning_mcp.worker`). Gemini 호출에 실패하면 해당 작업은 재시도 후 `failed`가 되며 `get_job_status`에서 오류를 확인할 수 있습니다.
+
+`evaluate_decision_candidate`는 큰 설계 결정을 판단하고 질문을 만들며, `record_user_answer`와 `record_review_confirmation`이 사용자 설명을 증거로 저장합니다. `get_learning_context`, `record_concept_use`, `request_delayed_recall`은 개념의 발견·설명·적용·지연 회상을 추적합니다. `mastered`는 자동 판정하지 않습니다.
+
 AI와 함께 개발한 과정을 feature 단위로 기록하고, Git 변경 사항·AI 대화·토큰 사용량·기술적 판단·디버깅 과정을 학습 리뷰로 바꾸는 로컬 MCP 서버입니다.
 
 단순히 “AI가 코드를 얼마나 작성했는가”를 계산하는 도구가 아닙니다. 사용자가 요구사항, 아키텍처, 구현, 디버깅, 테스트 중 무엇을 직접 판단했고 무엇을 AI와 함께 처리했는지 증거를 바탕으로 되돌아보는 것이 목적입니다.
@@ -377,7 +391,7 @@ save_feature_review
 리뷰 내용을 확인했어. 이 feature를 완료 처리해줘.
 ```
 
-`finish_feature`는 연결된 Codex session을 마지막으로 동기화하고 feature 상태를 `completed`로 변경합니다.
+`finish_feature`는 종료 시점의 Git 증거를 저장하고 연결된 Codex session의 최종 동기화를 Worker에 예약한 뒤 feature 상태를 `completed`로 변경합니다.
 
 ### 7. 과거 약점 확인
 

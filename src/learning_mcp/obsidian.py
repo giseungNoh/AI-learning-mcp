@@ -8,6 +8,7 @@ Obsidian 내보내기 및 마크다운 렌더링 모듈입니다.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import unicodedata
 from pathlib import Path
@@ -55,7 +56,8 @@ def render_review(feature: dict[str, Any], review: dict[str, Any], token_usage: 
         "tokens:",
     ]
     for key, value in token_usage.items():
-        lines.append(f"  {key}: {value}")
+        label = value["label"] if isinstance(value, dict) else value
+        lines.append(f"  {key}: {json.dumps(label, ensure_ascii=False)}")
     lines.extend(["ownership:"])
     for key, value in ownership.items():
         lines.append(f"  {key}: {value}")
@@ -85,7 +87,7 @@ def render_review(feature: dict[str, Any], review: dict[str, Any], token_usage: 
             "",
             "| 영역 | 판정 |",
             "|---|---|",
-            *[f"| {key} | {value} |" for key, value in ownership.items()],
+            *[f"| {key} | {value['label'] if isinstance(value, dict) else value} |" for key, value in ownership.items()],
             "",
             "## 다른 기술과 대안",
             "",
@@ -135,8 +137,25 @@ def export_review(vault: Path, feature: dict[str, Any], content: str) -> tuple[s
     if vault_resolved not in destination.parents:
         raise ValueError("resolved Obsidian path escapes the configured vault")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(content, encoding="utf-8")
+    marker_start = "<!-- learning-mcp:review:start -->"
+    marker_end = "<!-- learning-mcp:review:end -->"
+    if "\n---\n" in content:
+        frontmatter, body = content.split("\n---\n", 1)
+        frontmatter += "\n---\n"
+    else:
+        frontmatter, body = "", content
+    if destination.exists():
+        previous = destination.read_text(encoding="utf-8")
+        if marker_start in previous and marker_end in previous:
+            prefix, rest = previous.split(marker_start, 1)
+            _, suffix = rest.split(marker_end, 1)
+            stored = prefix + marker_start + "\n" + body.strip() + "\n" + marker_end + suffix
+        else:
+            stored = previous.rstrip() + "\n\n" + marker_start + "\n" + body.strip() + "\n" + marker_end + "\n"
+    else:
+        stored = frontmatter + "\n" + marker_start + "\n" + body.strip() + "\n" + marker_end + "\n"
+    destination.write_text(stored, encoding="utf-8")
     # 내용 검증용 SHA256 다이제스트 계산
-    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(stored.encode("utf-8")).hexdigest()
     return str(relative), digest
 

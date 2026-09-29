@@ -114,6 +114,96 @@ ON evidence(feature_id, kind);
 -- 원본 참조 중복 방지 유니크 인덱스
 CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_source_ref
 ON evidence(source_ref) WHERE source_ref IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    repository_key TEXT UNIQUE,
+    git_remote TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_roots (
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    local_root TEXT NOT NULL PRIMARY KEY,
+    last_seen_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL,
+    feature_id TEXT,
+    event_type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    fingerprint TEXT UNIQUE,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_type TEXT NOT NULL,
+    project_id TEXT,
+    feature_id TEXT,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    priority INTEGER NOT NULL DEFAULT 50,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    max_retries INTEGER NOT NULL DEFAULT 3,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    dedupe_key TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON jobs(status, priority DESC, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_dedupe_active ON jobs(dedupe_key)
+WHERE dedupe_key IS NOT NULL AND status IN ('pending', 'running');
+
+CREATE TABLE IF NOT EXISTS daily_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    review_date TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    obsidian_path TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(project_id, review_date)
+);
+CREATE TABLE IF NOT EXISTS concepts (
+    id TEXT PRIMARY KEY,
+    canonical_name TEXT NOT NULL,
+    concept_type TEXT NOT NULL,
+    category TEXT,
+    parent_concept_id TEXT,
+    obsidian_path TEXT,
+    status TEXT NOT NULL DEFAULT 'discovered',
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS concept_occurrences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    concept_id TEXT NOT NULL REFERENCES concepts(id),
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    feature_id TEXT,
+    evidence_ref TEXT,
+    role TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(concept_id, project_id, feature_id, evidence_ref, role)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_concept_occurrences_unique ON concept_occurrences(
+    concept_id, project_id, COALESCE(feature_id, ''), COALESCE(evidence_ref, ''), role
+);
+CREATE TABLE IF NOT EXISTS pending_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    feature_id TEXT REFERENCES features(id),
+    question TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    importance INTEGER NOT NULL,
+    concept_id TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    answer TEXT,
+    created_at TEXT NOT NULL,
+    answered_at TEXT
+);
 """
 
 
@@ -137,6 +227,22 @@ class Database:
                 connection.execute("ALTER TABLE sessions ADD COLUMN baseline_line INTEGER NOT NULL DEFAULT 0")
             if "latest_line" not in columns:
                 connection.execute("ALTER TABLE sessions ADD COLUMN latest_line INTEGER NOT NULL DEFAULT 0")
+            if "latest_byte" not in columns:
+                connection.execute("ALTER TABLE sessions ADD COLUMN latest_byte INTEGER NOT NULL DEFAULT 0")
+            feature_columns = {row["name"] for row in connection.execute("PRAGMA table_info(features)")}
+            for name in ("project_id", "end_commit", "snapshot_at"):
+                if name not in feature_columns:
+                    connection.execute(f"ALTER TABLE features ADD COLUMN {name} TEXT")
+            if "review_state" not in feature_columns:
+                connection.execute("ALTER TABLE features ADD COLUMN review_state TEXT NOT NULL DEFAULT 'unreviewed'")
+            review_columns = {row["name"] for row in connection.execute("PRAGMA table_info(reviews)")}
+            if "verification_ref" not in review_columns:
+                connection.execute("ALTER TABLE reviews ADD COLUMN verification_ref TEXT")
+            connection.execute("UPDATE features SET review_state='reviewed' WHERE review_state='unreviewed' "
+                               "AND EXISTS (SELECT 1 FROM reviews WHERE reviews.feature_id=features.id)")
+            connection.execute("UPDATE features SET review_state='review_pending' "
+                               "WHERE review_state='unreviewed' AND status='completed'")
+            connection.execute("PRAGMA busy_timeout = 5000")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

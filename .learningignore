@@ -1,0 +1,8 @@
+# Files omitted from Gemini evidence packets
+.env
+.env.*
+secrets/*
+credentials/*
+private/*
+*.pem
+*.key

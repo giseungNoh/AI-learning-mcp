@@ -123,3 +123,50 @@ def conversation_events(path: Path, after_line: int = 0) -> list[dict[str, Any]]
             )
     return events
 
+
+def scan_incremental(path: Path, after_byte: int = 0, after_line: int = 0,
+                     previous_usage: dict[str, int] | None = None) -> tuple[dict[str, int], int, int, list[dict[str, Any]]]:
+    """Parse complete new JSONL lines only, returning the next byte cursor."""
+    if path.stat().st_size < after_byte:
+        after_byte, after_line = 0, 0
+    usage = previous_usage
+    events: list[dict[str, Any]] = []
+    line_number = after_line
+    cursor = after_byte
+    with path.open("rb") as handle:
+        handle.seek(after_byte)
+        for raw in iter(handle.readline, b""):
+            if not raw.endswith(b"\n"):
+                break
+            line_number += 1
+            cursor = handle.tell()
+            try:
+                item = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            payload = item.get("payload", {})
+            if not isinstance(payload, dict):
+                continue
+            if item.get("type") == "event_msg" and payload.get("type") == "token_count":
+                info = payload.get("info") or {}
+                totals = info.get("total_token_usage") or {}
+                usage = {key: int(totals.get(key, 0) or 0) for key in TOKEN_KEYS}
+            role = ""
+            content = ""
+            if item.get("type") == "event_msg" and payload.get("type") in {"user_message", "agent_message"}:
+                role = "user" if payload["type"] == "user_message" else "assistant"
+                content = str(payload.get("message", ""))
+            elif item.get("type") == "response_item" and payload.get("type") == "message":
+                role = str(payload.get("role", ""))
+                parts = payload.get("content", [])
+                if isinstance(parts, list):
+                    content = "\n".join(str(part.get("text", "")) for part in parts if isinstance(part, dict)
+                                        and part.get("type") in {"input_text", "output_text", "text"})
+            if role in {"user", "assistant"} and content.strip():
+                clean = content.strip()
+                events.append({"line": line_number, "role": role, "summary": clean.replace("\n", " ")[:240],
+                               "content": clean[:4000], "timestamp": item.get("timestamp")})
+    if usage is None:
+        raise ValueError(f"no Codex token_count event found in {path}")
+    return usage, line_number, cursor, events
+
