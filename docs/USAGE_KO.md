@@ -38,6 +38,7 @@ learning-mcp/data/learning.db
 | `LEARNING_MCP_DB` | SQLite 파일 | `<home>/data/learning.db` |
 | `LEARNING_MCP_PROJECT_ROOT` | CLI `current` 명령의 레거시 기본값(MCP tool은 사용 안 함) | MCP 실행 cwd |
 | `LEARNING_MCP_OBSIDIAN_VAULT` | Obsidian Vault 절대경로 | 미설정 시 export 안 함 |
+| `LEARNING_MCP_OBSIDIAN_BASE_DIR` | Vault 내부의 생성물 기준 상대경로 | `dev/wiki` |
 | `LEARNING_MCP_CODEX_SESSION_ROOT` | 읽을 수 있는 Codex rollout 루트 | `~/.codex/sessions` |
 | `LEARNING_MCP_MAX_MANIFEST_CHARS` | manifest 상한 설정 | 8000 |
 | `LEARNING_MCP_MAX_EVIDENCE_CHARS` | evidence 본문 상한 | 12000 |
@@ -112,6 +113,19 @@ cp -R /Users/juks86/Documents/Codex/2026-08-24/learning-mcp/skills/* \
 여러 프로젝트에서 서버 하나를 사용할 때는 `~/.codex/skills/`에 개인 전역 skill로 설치하는 방식을 권장합니다. `learning-session`이 호출 시점의 현재 Git 루트를 전달하므로 skill을 프로젝트마다 복제할 필요가 없습니다. 특정 프로젝트만 다른 학습 정책을 써야 할 때만 그 저장소의 `.codex/skills/`에 별도 버전을 둡니다.
 
 Claude Code에서는 같은 skill 폴더를 대상 프로젝트의 `.claude/skills/`에 둘 수 있습니다. MCP 실행 명령과 환경 변수는 Claude Code의 로컬 stdio MCP 설정에 동일하게 전달합니다.
+
+### Codex 자동 추적 정책
+
+모든 Git 프로젝트의 실질적인 코드 변경에서 자동 추적하려면 `config/CODEX_AGENTS.md` 내용을 `~/.codex/AGENTS.md`에 설치하거나 기존 전역 지침에 병합합니다. 새 Codex 작업부터 적용됩니다.
+
+### macOS Worker 자동 시작
+
+```bash
+uv run learning-mcp-cli install-worker-autostart
+uv run learning-mcp-cli status
+```
+
+`status`의 `worker.healthy`가 `true`이고 `heartbeat_age_seconds`가 약 30초 이하면 정상입니다. 로그는 `~/Library/Logs/LearningMCP/`에 있습니다.
 
 ## 6. 실제 사용 흐름
 
@@ -191,10 +205,26 @@ get_feature_manifest(quick)
 → save_feature_review
 ```
 
+### 자동 추적
+
+전역 `learning-session` skill과 `AGENTS.md` 정책을 설치한 뒤에는 일반적인 코드 변경 요청만으로 `ensure_feature`가 호출됩니다. 사용자가 `$learning-session`을 직접 입력할 필요가 없습니다.
+
+```text
+로그인 API 구현해줘.
+```
+
+작업이 같은 성공 결과에 속하면 기존 active feature를 이어가고, 명확히 다른 기능으로 전환하면 이전 feature를 완료하거나 경계가 애매할 때 한 번만 확인합니다.
+
+Feature 리뷰의 다음 학습 주제와 일간 학습의 개념에는 Worker가 공식 자료를 자동 검색합니다. 우선순위는 기술 소유자의 공식 문서, 표준 문서, 원 논문 순서이며 블로그·튜토리얼·커뮤니티 글은 제외합니다. 검색 결과에 정확한 공개 URL이 없으면 링크를 추측하지 않고 빈 결과로 저장합니다.
+
 ### 피처 종료
 
 ```text
-finish_feature(feature_id="F-20260825-001")
+complete_feature(
+  feature_id="F-20260825-001",
+  completion_summary="성공 조건과 API 통합 테스트를 확인함",
+  tests=["pytest tests/test_auth.py 통과"]
+)
 ```
 
 연결된 Codex session을 다시 읽어 token delta와 feature 시작 이후 대화를 가져온 뒤 feature를 완료 처리합니다.
@@ -203,6 +233,10 @@ finish_feature(feature_id="F-20260825-001")
 
 | Tool | 용도 |
 |---|---|
+| `ensure_feature` | active feature를 이어가거나 자동 시작 |
+| `checkpoint_feature` | 미완료 진행 상황과 테스트 근거 저장 |
+| `complete_feature` | 최종 Git 증거 저장과 unverified draft 리뷰 예약 |
+| `get_system_status` | Worker heartbeat와 queue 상태 확인 |
 | `start_feature` | 목표·성공 조건·사용자/AI 범위 선언 |
 | `get_project_context` | 현재 경로를 Git 루트로 정규화하고 해당 프로젝트 활성 feature 조회 |
 | `record_decision` | 기술 선택과 대안 기록 |
@@ -229,6 +263,8 @@ dev/wiki/projects/<project>/features/<feature-id>/review-<feature-title>.md
 ```
 
 예: `F-20260825-001`의 제목이 `상품 키워드 검색 API`이면 `review-상품-키워드-검색-api.md`로 저장됩니다. 본문 H1에는 `F-20260825-001 — 상품 키워드 검색 API`처럼 원래 ID와 제목이 표시됩니다.
+
+리뷰에는 다음 학습 주제별 `공식 문서` 구역이 포함됩니다. 일간 학습에서 추출한 개념 노트도 `dev/wiki/concepts/` 아래 같은 구역을 가지므로, 개념 설명과 출처를 한 파일에서 확인할 수 있습니다.
 
 재사용할 개념과 디버깅 사례는 검토 후 각각 다음으로 승격합니다.
 

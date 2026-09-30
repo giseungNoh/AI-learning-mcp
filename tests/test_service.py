@@ -8,6 +8,7 @@ from pathlib import Path
 
 from learning_mcp.codex_usage import latest_usage, usage_delta
 from learning_mcp.config import Settings
+from learning_mcp import jobs
 from learning_mcp.obsidian import _filename_slug
 from learning_mcp.service import LearningService
 
@@ -148,6 +149,14 @@ class LearningServiceTests(unittest.TestCase):
             next_topics=["SQLite transactions"],
             verified=True,
             verification_ref=confirmation["ref"],
+            official_sources=[{
+                "topic_key": "next-topic:0",
+                "title": "SQLite Transaction",
+                "url": "https://www.sqlite.org/lang_transaction.html",
+                "publisher": "SQLite",
+                "source_type": "official-documentation",
+                "reason": "SQLite transaction behavior reference",
+            }],
         )
         self.assertTrue(saved["saved"])
         self.assertTrue((self.vault / saved["obsidian_path"]).is_file())
@@ -155,6 +164,7 @@ class LearningServiceTests(unittest.TestCase):
         note = (self.vault / saved["obsidian_path"]).read_text(encoding="utf-8")
         self.assertIn("human-led", note)
         self.assertIn("input_tokens: 80", note)
+        self.assertIn("sqlite.org/lang_transaction", note)
 
         finished = self.service.finish_feature(feature_id)
         self.assertEqual(finished["status"], "completed")
@@ -165,6 +175,43 @@ class LearningServiceTests(unittest.TestCase):
         self.start()
         with self.assertRaisesRegex(ValueError, "already active"):
             self.start()
+
+    def test_ensure_feature_is_idempotent_and_complete_queues_review(self) -> None:
+        first = self.service.ensure_feature(
+            str(self.project), "Automatic tracking", "Track normal coding requests",
+            ["No duplicate features"], ["Feature boundary"], ["Implementation"],
+        )
+        second = self.service.ensure_feature(
+            str(self.project), "Ignored duplicate title", "Ignored duplicate goal",
+            ["Ignored"], ["Ignored"], ["Ignored"],
+        )
+        self.assertTrue(first["created"])
+        self.assertTrue(second["continued"])
+        self.assertEqual(first["feature"]["id"], second["feature"]["id"])
+
+        checkpoint = self.service.checkpoint_feature(
+            first["feature"]["id"], "Implementation milestone", ["unit tests passed"]
+        )
+        self.assertIsNotNone(checkpoint["event_id"])
+        completed = self.service.complete_feature(
+            first["feature"]["id"], "Acceptance conditions met", ["unit tests passed"]
+        )
+        self.assertEqual(completed["feature"]["status"], "completed")
+        self.assertTrue(completed["review"]["queued"])
+        with self.service.db.connect() as connection:
+            row = connection.execute(
+                "SELECT status FROM jobs WHERE id=?", (completed["review"]["job_id"],)
+            ).fetchone()
+        self.assertEqual(row["status"], "pending")
+
+    def test_system_status_reports_worker_heartbeat_and_queue(self) -> None:
+        before = self.service.get_system_status(str(self.project))
+        self.assertFalse(before["worker"]["healthy"])
+        jobs.write_runtime_state(self.service.db, "worker-heartbeat", {"pid": 123, "state": "running"})
+        after = self.service.get_system_status(str(self.project))
+        self.assertTrue(after["worker"]["healthy"])
+        self.assertEqual(after["worker"]["last_heartbeat"]["value"]["pid"], 123)
+        self.assertIn("active_feature", after["project"])
 
     def test_project_root_is_required_and_normalized(self) -> None:
         nested = self.project / "src" / "nested"

@@ -12,6 +12,21 @@ START = "<!-- learning-mcp:start -->"
 END = "<!-- learning-mcp:end -->"
 
 
+def _concept_relative(concept: dict[str, Any], base_dir: Path = Path("dev/wiki")) -> Path:
+    """Return the LLM Wiki path for a generated concept note."""
+    cid = concept["id"]
+    parts = cid.split(".")
+    kind = "cs" if concept["type"] == "cs" else "development"
+    category = parts[1] if len(parts) > 2 else "general"
+    filename = "-".join(parts[2:]) if len(parts) > 2 else parts[1]
+    return base_dir / "concepts" / kind / category / f"{filename}.md"
+
+
+def _concept_link(concept: dict[str, Any], base_dir: Path = Path("dev/wiki")) -> str:
+    target = _concept_relative(concept, base_dir).with_suffix("").as_posix()
+    return f"[[{target}|{concept['name']}]]"
+
+
 def _safe_write(vault: Path, relative: Path, heading: str, body: str) -> str:
     root = vault.resolve()
     destination = (root / relative).resolve()
@@ -33,8 +48,9 @@ def _safe_write(vault: Path, relative: Path, heading: str, body: str) -> str:
     return relative.as_posix()
 
 
-def write_daily(vault: Path, project: str, review_date: str, result: dict[str, Any]) -> str:
-    relative = Path("dev/daily") / review_date[:4] / f"{review_date}-{_filename_slug(project)}.md"
+def write_daily(vault: Path, project: str, review_date: str, result: dict[str, Any],
+                base_dir: Path = Path("dev/wiki")) -> str:
+    relative = base_dir / "learning/daily" / review_date[:4] / f"{review_date}-{_filename_slug(project)}.md"
     heading = (f"---\ntype: daily-development-learning\ndate: {json.dumps(review_date)}\n"
                f"project: {json.dumps(project, ensure_ascii=False)}\n---\n\n# {review_date} 개발 학습")
     lines = ["## 오늘 개발한 것", "", result["summary"], "", "## 내가 직접 내린 결정", ""]
@@ -43,26 +59,29 @@ def write_daily(vault: Path, project: str, review_date: str, result: dict[str, A
                       item["user_reasoning"] or "사용자 판단 근거 미기록", "",
                       "근거: " + ", ".join(item["evidence_refs"]), ""])
     lines.extend(["## 오늘 등장한 개발 개념", ""])
-    lines.extend(f"- [[{item['name']}]]" for item in result["concepts"] if item["type"] == "dev")
+    lines.extend(f"- {_concept_link(item, base_dir)}" for item in result["concepts"] if item["type"] == "dev")
     lines.extend(["", "## 연결된 CS 개념", ""])
-    lines.extend(f"- [[{item['name']}]]" for item in result["concepts"] if item["type"] == "cs")
+    lines.extend(f"- {_concept_link(item, base_dir)}" for item in result["concepts"] if item["type"] == "cs")
     lines.extend(["", "## 다시 볼 내용", ""])
     lines.extend(f"- {item}" for item in result["review_candidates"])
     return _safe_write(vault, relative, heading, "\n".join(lines))
 
 
-def write_concept(vault: Path, concept: dict[str, Any], review_date: str) -> str:
+def write_concept(vault: Path, concept: dict[str, Any], review_date: str,
+                  base_dir: Path = Path("dev/wiki")) -> str:
     cid = concept["id"]
-    parts = cid.split(".")
-    kind = "cs" if concept["type"] == "cs" else "development"
-    category = parts[1] if len(parts) > 2 else "general"
-    filename = "-".join(parts[2:]) if len(parts) > 2 else parts[1]
-    relative = Path("dev/concepts") / kind / category / f"{filename}.md"
-    heading = (f"---\ntype: {json.dumps(concept['type'] + '-concept')}\n"
+    relative = _concept_relative(concept, base_dir)
+    heading = (f"---\ntitle: {json.dumps(concept['name'], ensure_ascii=False)}\n"
+               f"type: {json.dumps(concept['type'] + '-concept')}\n"
                f"concept_id: {json.dumps(cid)}\nfirst_seen: {json.dumps(review_date)}\n---\n\n"
                f"# {concept['name']}")
     body = ("## 핵심 개념\n\n" + concept["explanation"] + "\n\n## 프로젝트와 연결\n\n"
             + concept["connection"] + "\n\n## 관련 개념\n\n"
             + "\n".join(f"- [[{name}]]" for name in concept["related_concepts"])
+            + "\n\n## 공식 문서\n\n"
+            + ("\n".join(
+                f"- [{source['title']}]({source['url']}) — {source['publisher']}: {source['reason']}"
+                for source in concept.get("official_sources", [])
+            ) or "- 검색으로 확인된 공식 문서 없음")
             + "\n\n## 실제 사용 기록\n\n" + "\n".join(f"- {ref}" for ref in concept["evidence_refs"]))
     return _safe_write(vault, relative, heading, body)

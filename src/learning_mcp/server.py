@@ -53,6 +53,24 @@ def start_feature(
 
 
 @mcp.tool()
+def ensure_feature(
+    project_root: str,
+    title: str,
+    goal: str,
+    success_conditions: list[str],
+    user_owned_scope: list[str],
+    ai_allowed_scope: list[str],
+    project_name: str | None = None,
+    session_file: str | None = None,
+) -> dict:
+    """Automatically continue the active feature or create one for a substantive coding task."""
+    return service.ensure_feature(
+        project_root, title, goal, success_conditions, user_owned_scope,
+        ai_allowed_scope, project_name, session_file,
+    )
+
+
+@mcp.tool()
 def get_project_context(project_root: str) -> dict:
     """
     [MCP Tool] 지정된 project_root 경로의 Git 상태 및 현재 진행 중인 활성 기능(Active Feature)을 조회합니다.
@@ -119,6 +137,19 @@ def get_job_status(job_id: int) -> dict:
     if row is None:
         raise ValueError(f"unknown job: {job_id}")
     return dict(row)
+
+
+@mcp.tool()
+def get_system_status(project_root: str | None = None) -> dict:
+    """Return worker heartbeat, queue health, and optional active feature context."""
+    return service.get_system_status(project_root)
+
+
+@mcp.tool()
+def checkpoint_feature(feature_id: str, summary: str, tests: list[str] | None = None,
+                       session_file: str | None = None, fingerprint: str | None = None) -> dict:
+    """Record progress and optionally sync the exact session without finishing the feature."""
+    return service.checkpoint_feature(feature_id, summary, tests, session_file, fingerprint)
 
 
 @mcp.tool()
@@ -217,12 +248,14 @@ def save_feature_review(
     verified: bool = False,
     export_to_obsidian: bool = True,
     verification_ref: str | None = None,
+    official_sources: list[dict[str, str]] | None = None,
 ) -> dict:
     """
     [MCP Tool] 기능 구현 완료 후 학습 회고/리뷰 데이터를 저장하고 선택적으로 Obsidian Vault로 내보냅니다.
     """
     return service.save_feature_review(feature_id, summary, code_flow, ownership, alternatives,
-                                       weaknesses, next_topics, verified, export_to_obsidian, verification_ref)
+                                       weaknesses, next_topics, verified, export_to_obsidian,
+                                       verification_ref, official_sources)
 
 
 @mcp.tool()
@@ -231,6 +264,13 @@ def finish_feature(feature_id: str) -> dict:
     [MCP Tool] 진행 중인 기능을 완료(completed) 처리하고 연동된 Codex 세션 토큰 사용량을 최종 갱신합니다.
     """
     return service.finish_feature(feature_id)
+
+
+@mcp.tool()
+def complete_feature(feature_id: str, completion_summary: str = "",
+                     tests: list[str] | None = None, request_review: bool = True) -> dict:
+    """Capture final Git evidence and queue an unverified draft review."""
+    return service.complete_feature(feature_id, completion_summary, tests, request_review)
 
 
 @mcp.tool()
@@ -256,4 +296,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

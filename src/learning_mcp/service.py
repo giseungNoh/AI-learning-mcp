@@ -197,6 +197,134 @@ class LearningService:
                            feature_id, fingerprint=f"feature-start:{feature_id}")
         return self._feature(feature_id)
 
+    def ensure_feature(
+        self,
+        project_root: str,
+        title: str,
+        goal: str,
+        success_conditions: list[str],
+        user_owned_scope: list[str],
+        ai_allowed_scope: list[str],
+        project_name: str | None = None,
+        session_file: str | None = None,
+    ) -> dict[str, Any]:
+        """Return the active feature or create one for a substantive coding request.
+
+        This idempotent entry point lets an agent apply automatic tracking on every
+        code-changing request without accidentally creating duplicate features.
+        """
+        root = git_tools.resolve_root(project_root)
+        active = self.current_feature(str(root))
+        created = active is None
+        feature = active or self.start_feature(
+            title,
+            goal,
+            success_conditions,
+            user_owned_scope,
+            ai_allowed_scope,
+            project_name=project_name,
+            project_root=str(root),
+        )
+        sync_job_id = None
+        if created and session_file:
+            sync_job_id = self.request_session_sync(feature["id"], session_file, "start")["job_id"]
+        return {
+            "feature": feature,
+            "created": created,
+            "continued": not created,
+            "session_sync_job_id": sync_job_id,
+        }
+
+    def checkpoint_feature(
+        self,
+        feature_id: str,
+        summary: str,
+        tests: list[str] | None = None,
+        session_file: str | None = None,
+        fingerprint: str | None = None,
+    ) -> dict[str, Any]:
+        """Save lightweight progress without treating inactivity as completion."""
+        feature = self._feature(feature_id)
+        if feature["status"] != "active":
+            raise ValueError("checkpoints require an active feature")
+        if not summary.strip():
+            raise ValueError("checkpoint summary is required")
+        event = self.capture_event(
+            feature["project_root"],
+            "feature_checkpoint",
+            {"summary": summary.strip(), "tests": tests or []},
+            feature_id,
+            fingerprint=fingerprint,
+        )
+        sync_job_id = None
+        if session_file:
+            sync_job_id = self.request_session_sync(feature_id, session_file, "update")["job_id"]
+        return {"feature_id": feature_id, "event_id": event["event_id"],
+                "session_sync_job_id": sync_job_id}
+
+    def complete_feature(
+        self,
+        feature_id: str,
+        completion_summary: str = "",
+        tests: list[str] | None = None,
+        request_review: bool = True,
+    ) -> dict[str, Any]:
+        """Finalize Git evidence and queue an unverified draft review in one call."""
+        feature = self._feature(feature_id)
+        if feature["status"] == "active":
+            if completion_summary.strip() or tests:
+                self.capture_event(
+                    feature["project_root"],
+                    "completion_signal",
+                    {"summary": completion_summary.strip(), "tests": tests or []},
+                    feature_id,
+                    fingerprint=f"completion-signal:{feature_id}",
+                )
+            finished = self.finish_feature(feature_id)
+            already_completed = False
+        else:
+            finished = {"feature_id": feature_id, "status": feature["status"],
+                        "finished_at": feature.get("finished_at")}
+            already_completed = True
+        review = self.request_feature_review(feature_id) if request_review else {"queued": False}
+        return {"feature": finished, "already_completed": already_completed, "review": review}
+
+    def get_system_status(self, project_root: str | None = None) -> dict[str, Any]:
+        """Return worker health, queue pressure, and optional project context."""
+        heartbeat = jobs.read_runtime_state(self.db, "worker-heartbeat")
+        heartbeat_age_seconds = None
+        worker_healthy = False
+        if heartbeat:
+            updated = datetime.fromisoformat(heartbeat["updated_at"])
+            heartbeat_age_seconds = max(
+                0, int((datetime.now(timezone.utc) - updated.astimezone(timezone.utc)).total_seconds())
+            )
+            worker_healthy = heartbeat_age_seconds <= 30
+        with self.db.connect() as connection:
+            queue = {
+                row["status"]: row["count"]
+                for row in connection.execute(
+                    "SELECT status, COUNT(*) AS count FROM jobs GROUP BY status"
+                ).fetchall()
+            }
+            recent_errors = [dict(row) for row in connection.execute(
+                "SELECT id, job_type, feature_id, error, finished_at FROM jobs "
+                "WHERE status='failed' ORDER BY id DESC LIMIT 5"
+            ).fetchall()]
+        result = {
+            "worker": {
+                "healthy": worker_healthy,
+                "heartbeat_age_seconds": heartbeat_age_seconds,
+                "last_heartbeat": heartbeat,
+            },
+            "queue": {name: queue.get(name, 0) for name in
+                      ("pending", "running", "completed", "failed")},
+            "recent_errors": recent_errors,
+        }
+        if project_root:
+            result["project"] = self.get_project_context(project_root)
+        return result
+
     def record_decision(
         self,
         feature_id: str,
@@ -807,10 +935,13 @@ class LearningService:
         verified: bool = False,
         export_to_obsidian: bool = True,
         verification_ref: str | None = None,
+        official_sources: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
         """
         기능 개발 완료 후 종합 회고 리뷰를 DB에 저장하고, Obsidian Vault가 설정된 경우 마크다운 파일로 내보냅니다.
         """
+        from .official_sources import validate_official_sources
+
         feature = self._feature(feature_id)
         if verified:
             if not verification_ref:
@@ -826,6 +957,9 @@ class LearningService:
         invalid = set(ownership) - valid_areas
         if invalid:
             raise ValueError(f"unsupported ownership areas: {sorted(invalid)}")
+        raw_sources = official_sources or []
+        source_keys = {str(item.get("topic_key") or "") for item in raw_sources if isinstance(item, dict)}
+        normalized_sources = validate_official_sources({"sources": raw_sources}, source_keys)
         review = {
             "summary": summary,
             "code_flow": code_flow,
@@ -834,6 +968,7 @@ class LearningService:
             "weaknesses": weaknesses,
             "next_topics": next_topics[:3],
             "verified": verified,
+            "official_sources": normalized_sources,
         }
         token_totals, _ = self._token_totals(feature_id)
         obsidian_path: str | None = None
@@ -841,14 +976,17 @@ class LearningService:
         # Obsidian 내보내기 처리
         if export_to_obsidian and self.settings.obsidian_vault:
             content = render_review(feature, review, token_totals)
-            obsidian_path, digest = export_review(self.settings.obsidian_vault, feature, content)
+            obsidian_path, digest = export_review(
+                self.settings.obsidian_vault, feature, content, self.settings.obsidian_base_dir
+            )
         timestamp = now_iso()
         with self.db.connect() as connection:
             cursor = connection.execute(
                 """INSERT INTO reviews
                 (feature_id, summary, code_flow, ownership_json, alternatives_json,
-                 weaknesses_json, next_topics_json, verified, obsidian_path, created_at, verification_ref)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 weaknesses_json, next_topics_json, verified, obsidian_path, created_at, verification_ref,
+                 official_sources_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     feature_id,
                     summary,
@@ -861,6 +999,7 @@ class LearningService:
                     obsidian_path,
                     timestamp,
                     verification_ref,
+                    dumps(normalized_sources),
                 ),
             )
             review_id = cursor.lastrowid
@@ -950,4 +1089,3 @@ class LearningService:
                 }
             )
         return {"project": project_slug, "reviews": reviews, "recurring_weaknesses": weakness_counts.most_common(5)}
-

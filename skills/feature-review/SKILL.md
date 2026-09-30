@@ -7,7 +7,7 @@ description: Review a Learning MCP feature or staged commit using compact eviden
 
 1. Identify the feature explicitly. If no feature ID was supplied, resolve the host workspace with `git rev-parse --show-toplevel`, then call `get_project_context(project_root=<current Git root>)`. Call `get_feature_manifest(detail="quick")` for that feature first.
 2. Check the declared human scope, success conditions, Git stats, decisions, debugging attempts, and token measurement quality.
-3. Fetch only necessary refs with `get_evidence`. Start with `diff:staged`; use `diff:working` only when staged is empty or the user asks. Keep the evidence request small.
+3. Fetch only necessary refs with `get_evidence`. For an active feature, start with `diff:staged` and use `diff:working` only when needed. For a completed feature, use immutable `git:feature-diff`, `git:commits`, and selected final snapshot refs. Keep the evidence request small.
 4. Review in this order:
    - changed behavior and code flow;
    - correctness, tests, and risks;

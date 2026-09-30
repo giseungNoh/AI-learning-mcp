@@ -4,13 +4,13 @@
 
 프로젝트 식별자는 Git 원격 주소(없으면 최초 커밋)를 기준으로 유지하고, 로컬 경로는 별칭으로 기록합니다. 기능 시작과 종료 시 Git 증거를 SQLite에 저장합니다. 종료 후에는 `git:feature-diff`, `git:commits`, `git:working-final`, `git:staged-final`, `git:untracked-final` 등의 ref로 당시 내용을 조회할 수 있습니다. 종료된 기능의 `diff:working`과 `diff:staged`는 현재 작업 트리를 읽지 않습니다.
 
-MCP의 `sync_codex_session`은 작업 ID를 즉시 반환합니다. 별도 터미널에서 `uv run learning-mcp-worker`를 실행해야 대화 동기화 작업이 처리됩니다. `get_job_status`로 진행 상태를 확인할 수 있고, `capture_event`는 중복 방지용 `fingerprint`를 받을 수 있습니다. CLI의 기존 `sync-codex` 명령은 직접 동기화 방식으로 남아 있습니다.
+MCP의 `sync_codex_session`은 작업 ID를 즉시 반환합니다. Worker가 대화 동기화와 리뷰 작업을 처리하며, macOS에서는 `learning-mcp-cli install-worker-autostart`로 로그인 자동 실행을 설치할 수 있습니다. `get_system_status` 또는 CLI `status`로 heartbeat와 queue 상태를 확인합니다.
 
-기능 종료 시 Git 증거는 정확한 종료 시점을 보존하기 위해 호출 안에서 캡처합니다. `request_feature_review`와 `request_daily_review`는 Gemini 분석을 작업 큐에 넣습니다. Worker는 압축된 근거를 전달하고 JSON 응답의 구조와 근거 ref를 검증한 뒤, Python 코드로 리뷰와 Obsidian 노트를 저장합니다. `dev/daily`와 `dev/concepts`에 쓰는 생성 영역은 기존 사용자 메모를 보존합니다.
+기능 종료 시 Git 증거는 정확한 종료 시점을 보존하기 위해 호출 안에서 캡처합니다. `request_feature_review`와 `request_daily_review`는 Gemini 분석을 작업 큐에 넣습니다. Worker는 압축된 근거를 전달하고 JSON 응답의 구조와 근거 ref를 검증한 뒤, Python 코드로 리뷰와 Obsidian 노트를 저장합니다. 기술 개념이 나오면 별도의 격리된 Antigravity 검색으로 기술 소유자의 문서, 표준, 원 논문 링크를 찾습니다. 검색 결과에서 확인되지 않은 URL은 만들지 않습니다. 생성 영역은 `LEARNING_MCP_OBSIDIAN_BASE_DIR` 아래에 만들며 기존 사용자 메모를 보존합니다.
 
 실제 Gemini 분석에는 인증된 [Antigravity CLI `agy`](https://www.antigravity.google/docs/cli/headless/) 또는 [Gemini CLI](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/headless.md)가 필요합니다. `agy`가 있으면 기본적으로 Gemini 모델 `gemini-3.8-flash-medium`을 사용하며, `LEARNING_MCP_GEMINI_MODEL`로 바꿀 수 있습니다. 기본 실행 파일이 PATH에 없으면 `LEARNING_MCP_GEMINI_EXECUTABLE`, 백엔드 선택이 필요하면 `LEARNING_MCP_GEMINI_BACKEND=agy` 또는 `gemini`를 설정하세요. `LEARNING_MCP_OBSIDIAN_VAULT`도 본인 Vault 경로로 설정해야 실제 Vault에 저장됩니다.
 
-MCP 서버와 별도로 `uv run learning-mcp-worker`를 실행해야 합니다. `uv`가 없으면 프로젝트에서 `PYTHONPATH=src python -m learning_mcp.worker`로 실행할 수 있습니다(Windows PowerShell: `$env:PYTHONPATH='src'; python -m learning_mcp.worker`). Gemini 호출에 실패하면 해당 작업은 재시도 후 `failed`가 되며 `get_job_status`에서 오류를 확인할 수 있습니다.
+자동 시작을 설치하지 않은 환경에서는 MCP 서버와 별도로 `uv run learning-mcp-worker`를 실행해야 합니다. `uv`가 없으면 프로젝트에서 `PYTHONPATH=src python -m learning_mcp.worker`로 실행할 수 있습니다(Windows PowerShell: `$env:PYTHONPATH='src'; python -m learning_mcp.worker`). Gemini 호출에 실패하면 해당 작업은 재시도 후 `failed`가 되며 `get_job_status`에서 오류를 확인할 수 있습니다.
 
 `evaluate_decision_candidate`는 큰 설계 결정을 판단하고 질문을 만들며, `record_user_answer`와 `record_review_confirmation`이 사용자 설명을 증거로 저장합니다. `get_learning_context`, `record_concept_use`, `request_delayed_recall`은 개념의 발견·설명·적용·지연 회상을 추적합니다. `mastered`는 자동 판정하지 않습니다.
 
@@ -72,6 +72,7 @@ Learning MCP는 개발 결과보다 **개발 중 내린 판단과 검증 과정*
 | 토큰 절약형 리뷰 | 작은 manifest를 먼저 읽고 필요한 evidence만 선택 조회합니다. |
 | 학습 기여도 리뷰 | 요구사항, 아키텍처, 구현, 디버깅, 테스트를 사람·AI 기여도로 구분합니다. |
 | 반복 약점 추적 | 과거 리뷰의 약점과 다음 학습 주제를 프로젝트별로 요약합니다. |
+| 공식 자료 연결 | 개념별로 공식 문서·표준·원 논문을 검색하고 검증된 공개 URL만 기록합니다. |
 | Obsidian 내보내기 | 검토 결과를 프로젝트/feature별 Markdown 파일로 저장합니다. |
 | 책 집필 연결 | 검증된 feature만 증거 묶음으로 만들어 기존 책 집필 Agent에 전달합니다. |
 
@@ -173,12 +174,44 @@ uv run learning-mcp
 | `LEARNING_MCP_HOME` | 서버 데이터 기준 폴더 | Learning MCP 저장소 루트 |
 | `LEARNING_MCP_DB` | SQLite DB 절대경로 | `<home>/data/learning.db` |
 | `LEARNING_MCP_OBSIDIAN_VAULT` | 리뷰를 내보낼 Obsidian Vault | 미설정 시 내보내지 않음 |
+| `LEARNING_MCP_OBSIDIAN_BASE_DIR` | Vault 내부의 Learning MCP 생성물 기준 경로 | `dev/wiki` |
 | `LEARNING_MCP_CODEX_SESSION_ROOT` | 읽을 수 있는 Codex rollout 최상위 폴더 | `~/.codex/sessions` |
 | `LEARNING_MCP_MAX_MANIFEST_CHARS` | manifest 최대 문자 수 | `8000` |
 | `LEARNING_MCP_MAX_EVIDENCE_CHARS` | evidence 응답 최대 문자 수 | `12000` |
 | `LEARNING_MCP_PROJECT_ROOT` | CLI `current`의 레거시 기본값 | 현재 실행 폴더 |
+| `LEARNING_MCP_OFFICIAL_DOCS_EXECUTABLE` | 공식 자료 검색용 Antigravity 실행 파일 | `agy` |
 
 MCP feature 시작에는 `LEARNING_MCP_PROJECT_ROOT`를 사용하지 않습니다. 현재 프로젝트의 Git 루트가 tool 호출 인자로 반드시 전달됩니다.
+
+### Obsidian 저장 경로 지정
+
+Obsidian 경로는 두 값으로 나눠 설정합니다.
+
+| 설정 | 입력할 값 | 예시 |
+|---|---|---|
+| `LEARNING_MCP_OBSIDIAN_VAULT` | Obsidian Vault 자체의 절대경로 | `/Users/me/Documents/Obsidian Vault` |
+| `LEARNING_MCP_OBSIDIAN_BASE_DIR` | Vault 안에서 Learning MCP가 사용할 상대경로 | `dev/learning-mcp` |
+
+`LEARNING_MCP_OBSIDIAN_BASE_DIR`에는 Vault 절대경로를 넣지 않습니다. 절대경로나 `..`가 포함된 경로는 Vault 밖으로 나갈 수 있으므로 거부됩니다.
+
+현재 이 저장소에서 사용하는 설정은 다음과 같습니다.
+
+```bash
+export LEARNING_MCP_OBSIDIAN_VAULT='/Users/juks86/Library/Mobile Documents/iCloud~md~obsidian/Documents/Obsidian Vault'
+export LEARNING_MCP_OBSIDIAN_BASE_DIR='dev/learning-mcp'
+```
+
+이 설정에서는 파일이 다음 구조로 생성됩니다.
+
+```text
+Obsidian Vault/
+└── dev/learning-mcp/
+    ├── projects/<project>/features/<feature-id>/review-<title>.md
+    ├── learning/daily/<year>/<date>-<project>.md
+    └── concepts/<development-or-cs>/<category>/<concept>.md
+```
+
+MCP 서버와 background Worker는 별도 프로세스이므로 두 곳 모두 같은 값을 설정해야 합니다. MCP 등록 예시는 아래 절을 따르고, Worker 설치 시에도 두 환경 변수를 함께 전달합니다.
 
 ## Codex에 MCP 등록
 
@@ -189,9 +222,16 @@ codex mcp add learning-mcp \
   --env LEARNING_MCP_HOME=/Users/juks86/Documents/Codex/2026-08-24/learning-mcp \
   --env LEARNING_MCP_DB=/Users/juks86/Documents/Codex/2026-08-24/learning-mcp/data/learning.db \
   --env 'LEARNING_MCP_OBSIDIAN_VAULT=/Users/juks86/Library/Mobile Documents/iCloud~md~obsidian/Documents/Obsidian Vault' \
+  --env 'LEARNING_MCP_OBSIDIAN_BASE_DIR=dev/learning-mcp' \
   -- /Users/juks86/.local/bin/uv run \
   --directory /Users/juks86/Documents/Codex/2026-08-24/learning-mcp \
   learning-mcp
+```
+
+이미 `learning-mcp`가 등록되어 있다면 기존 등록을 제거한 뒤 위 명령으로 다시 등록합니다. DB와 Obsidian 파일은 삭제되지 않고 Codex의 MCP 실행 설정만 교체됩니다.
+
+```bash
+codex mcp remove learning-mcp
 ```
 
 등록 상태 확인:
@@ -208,6 +248,7 @@ learning-mcp
   transport: stdio
   command: /Users/juks86/.local/bin/uv
   args: run --directory .../learning-mcp learning-mcp
+  env: LEARNING_MCP_OBSIDIAN_BASE_DIR=*****, LEARNING_MCP_OBSIDIAN_VAULT=***** ...
 ```
 
 새 도구 스키마를 반영하려면 MCP 등록 또는 서버 코드를 변경한 뒤 Codex를 재시작하거나 새 작업을 여는 것이 안전합니다.
@@ -241,6 +282,23 @@ cp -R /Users/juks86/Documents/Codex/2026-08-24/learning-mcp/skills/* \
 
 Skill을 설치하거나 수정한 뒤에는 새 Codex 작업에서 사용하는 편이 안전합니다.
 
+일반 개발 요청에서도 자동 추적을 기본값으로 만들려면 저장소의 정책 파일을 전역 Codex 지침으로 설치합니다. 기존 전역 지침이 있다면 덮어쓰지 말고 내용을 병합하세요.
+
+```bash
+cp config/CODEX_AGENTS.md ~/.codex/AGENTS.md
+```
+
+macOS에서 background worker를 로그인 시 자동 실행하려면:
+
+```bash
+LEARNING_MCP_OBSIDIAN_VAULT='/path/to/Obsidian Vault' \
+LEARNING_MCP_OBSIDIAN_BASE_DIR='dev/learning-mcp' \
+uv run learning-mcp-cli install-worker-autostart
+uv run learning-mcp-cli status
+```
+
+LaunchAgent 로그는 `~/Library/Logs/LearningMCP/`에 저장됩니다.
+
 ## 실제 사용 방법
 
 ### 가장 효과적인 한 사이클
@@ -257,6 +315,8 @@ Co-work 계획서에서 사용자 행동 단위 Feature 선택
 → verified 리뷰 저장 → Feature ID 포함 commit → finish_feature
 → Obsidian 대시보드 확인 → 주간에 concept/debugging으로 승격
 ```
+
+자동 추적 정책을 설치한 뒤에는 `$learning-session` 문구를 직접 입력하지 않아도 됩니다. 일반적인 기능·버그 수정·리팩터링 요청에서 Agent가 `ensure_feature`를 호출합니다. 오타, 포맷팅, 읽기 전용 질문은 Feature를 만들지 않습니다. 다른 결과로 전환하는 경계가 애매할 때만 사용자에게 확인하고, `verified`와 `mastered`는 계속 사용자 설명을 요구합니다.
 
 Feature 시작 예시:
 
@@ -424,7 +484,23 @@ save_feature_review
 
 ## MCP 도구
 
-현재 MCP tool은 10개입니다.
+일반 개발에서는 자동 추적용 `ensure_feature`, `checkpoint_feature`, `complete_feature`를 우선 사용합니다. 기존 세부 tool은 수동 복구와 정밀 제어를 위해 유지합니다.
+
+### `ensure_feature`
+
+실질적인 코드 변경 요청이 들어올 때 호출합니다. active feature가 있으면 이어가고, 없으면 새 feature를 시작하므로 재시도에도 중복 생성되지 않습니다. 정확한 Codex rollout 경로를 알고 있을 때만 `session_file`을 전달합니다.
+
+### `checkpoint_feature`
+
+테스트된 중간 이정표나 미완료 작업의 일시 정지를 기록합니다. checkpoint는 feature를 종료하지 않습니다.
+
+### `complete_feature`
+
+완료 신호와 테스트 근거를 저장하고, 최종 Git snapshot을 캡처한 뒤 `needs-confirmation` draft 리뷰를 자동 예약합니다. `verified`로 만들지는 않습니다.
+
+### `get_system_status`
+
+Worker heartbeat, pending/running/failed queue 수, 최근 오류와 선택적 프로젝트 active feature를 반환합니다.
 
 ### `get_project_context`
 
@@ -521,6 +597,8 @@ manifest에서 선택한 ref의 본문만 가져옵니다.
 
 연결된 Codex session을 다시 읽고 token과 대화를 갱신한 뒤 feature를 완료합니다.
 
+자동 추적 흐름에서는 직접 호출하는 대신 `complete_feature`를 사용합니다.
+
 ### `get_learning_history`
 
 프로젝트의 최근 리뷰와 반복 약점을 반환합니다. 조회 개수는 최대 30개, 반복 약점은 상위 5개입니다.
@@ -604,16 +682,18 @@ MCP 서버는 Codex 화면의 대화를 직접 볼 수 없습니다. `sync_codex
 
 ## Obsidian과 책 집필 연결
 
-`LEARNING_MCP_OBSIDIAN_VAULT`가 설정되면 리뷰가 다음 위치에 저장됩니다.
+현재 LLM Wiki 구조에 맞춘 폴더 경계와 주간 운영법은 [Obsidian × Learning MCP 운영 가이드](docs/OBSIDIAN_LEARNING_WORKFLOW_KO.md)를 참고하세요. `vault-bootstrap/`에는 기존 원본과 일간 기록을 건드리지 않고 추가할 수 있는 홈·사용법·Dataview 대시보드가 들어 있습니다.
+
+`LEARNING_MCP_OBSIDIAN_VAULT`가 설정되면 리뷰가 `LEARNING_MCP_OBSIDIAN_BASE_DIR` 아래 저장됩니다. 현재 권장 설정인 `dev/learning-mcp` 기준 경로는 다음과 같습니다.
 
 ```text
-dev/wiki/projects/<project-slug>/features/<feature-id>/review-<feature-title>.md
+dev/learning-mcp/projects/<project-slug>/features/<feature-id>/review-<feature-title>.md
 ```
 
 예를 들어 ID가 `F-20260825-001`, 제목이 `상품 키워드 검색 API`라면 다음처럼 저장됩니다.
 
 ```text
-dev/wiki/projects/shop-api/features/F-20260825-001/review-상품-키워드-검색-api.md
+dev/learning-mcp/projects/shop-api/features/F-20260825-001/review-상품-키워드-검색-api.md
 ```
 
 파일명은 feature 시작 때 전달한 `title`에서 만듭니다. 공백과 경로에 부적합한 문자는 `-`로 바꾸고 한글·영문·숫자는 유지하므로, Obsidian 파일 탐색기에서도 어떤 리뷰인지 바로 알 수 있습니다. 본문의 제목에는 원래 feature ID와 제목이 그대로 들어갑니다.
@@ -630,15 +710,18 @@ dev/wiki/projects/shop-api/features/F-20260825-001/review-상품-키워드-검�
 - 영역별 기여도
 - 다른 기술과 대안
 - 반복 약점과 다음 학습 주제
+- 다음 학습 주제의 공식 문서·표준·원 논문 링크
 - token 사용량
+
+일간 학습에서 생성되는 `dev/learning-mcp/concepts/` 노트에도 `공식 문서` 구역이 추가됩니다. 공식 자료 검색은 임시 작업공간에서 Antigravity의 `search_web`만 사용하며 URL 본문, 로컬 파일, 명령, 브라우저, MCP 도구는 사용하지 않습니다. 검색 결과에서 권위 있는 URL을 확인할 수 없으면 `검색으로 확인된 공식 문서 없음`으로 남깁니다. 이 별도 검색의 모델 사용량은 Antigravity/Gemini 계정 쪽에서 발생하며 Codex 대화 토큰 집계에는 포함되지 않습니다.
 
 내보낼 경로가 설정한 Vault 밖으로 벗어나지 못하도록 resolved path를 검증합니다. 저장 결과에는 파일 경로와 내용의 SHA-256 hash가 반환됩니다.
 
 재사용 가치가 있는 기록은 검토 후 다음 폴더로 승격할 수 있습니다.
 
 ```text
-dev/wiki/concepts/
-dev/wiki/debugging/
+dev/learning-mcp/concepts/
+dev/learning-mcp/debugging/
 ```
 
 책 집필 연결:
@@ -855,7 +938,8 @@ session을 feature 시작 후에 연결하면 측정값이 `whole-session`이 �
 
 다음을 확인합니다.
 
-- MCP 등록에 `LEARNING_MCP_OBSIDIAN_VAULT`가 있는가?
+- MCP 등록에 `LEARNING_MCP_OBSIDIAN_VAULT`와 `LEARNING_MCP_OBSIDIAN_BASE_DIR`가 있는가?
+- Worker LaunchAgent에도 두 환경 변수가 같은 값으로 들어 있는가?
 - 경로가 실제 Vault 절대경로인가?
 - `save_feature_review`에서 `export_to_obsidian=true`인가?
 - MCP 설정을 바꾼 뒤 Codex를 재시작했는가?

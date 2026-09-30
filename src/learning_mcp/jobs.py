@@ -75,3 +75,23 @@ def recover_stale(db: Database, before: str) -> int:
             "WHERE status = 'running' AND started_at < ?", (before,),
         )
         return cursor.rowcount
+
+
+def write_runtime_state(db: Database, key: str, value: dict[str, Any]) -> None:
+    """Store a small last-known runtime state such as the worker heartbeat."""
+    with db.connect() as connection:
+        connection.execute(
+            "INSERT INTO runtime_state(key, value_json, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at",
+            (key, json.dumps(value, ensure_ascii=False), now()),
+        )
+
+
+def read_runtime_state(db: Database, key: str) -> dict[str, Any] | None:
+    with db.connect() as connection:
+        row = connection.execute(
+            "SELECT value_json, updated_at FROM runtime_state WHERE key=?", (key,)
+        ).fetchone()
+    if row is None:
+        return None
+    return {"value": json.loads(row["value_json"]), "updated_at": row["updated_at"]}

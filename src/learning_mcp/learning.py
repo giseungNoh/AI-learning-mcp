@@ -159,10 +159,16 @@ def feature_packet(db: Database, feature_id: str) -> tuple[dict[str, Any], set[s
 
 
 def store_daily(db: Database, project_id: str, review_date: str,
-                raw: dict[str, Any], allowed_refs: set[str], vault: Path | None) -> dict[str, Any]:
+                raw: dict[str, Any], allowed_refs: set[str], vault: Path | None,
+                official_sources: list[dict[str, str]] | None = None,
+                obsidian_base_dir: Path = Path("dev/wiki")) -> dict[str, Any]:
     from .learning_notes import write_daily, write_concept
+    from .official_sources import group_sources
 
     result = validate_daily(raw, allowed_refs)
+    sources_by_topic = group_sources(official_sources or [])
+    for concept in result["concepts"]:
+        concept["official_sources"] = sources_by_topic.get(concept["id"], [])
     with db.connect() as connection:
         existing = connection.execute("SELECT id, obsidian_path FROM daily_reviews "
                                       "WHERE project_id=? AND review_date=?", (project_id, review_date)).fetchone()
@@ -173,13 +179,13 @@ def store_daily(db: Database, project_id: str, review_date: str,
             raise ValueError("unknown project")
         from .jobs import now
         timestamp = now()
-        path = write_daily(vault, project["name"], review_date, result) if vault else None
+        path = write_daily(vault, project["name"], review_date, result, obsidian_base_dir) if vault else None
         cursor = connection.execute(
             "INSERT INTO daily_reviews(project_id, review_date, result_json, obsidian_path, created_at) "
             "VALUES (?, ?, ?, ?, ?)",
             (project_id, review_date, json.dumps(result, ensure_ascii=False), path, timestamp))
         for concept in result["concepts"]:
-            concept_path = write_concept(vault, concept, review_date) if vault else None
+            concept_path = write_concept(vault, concept, review_date, obsidian_base_dir) if vault else None
             connection.execute(
                 "INSERT INTO concepts(id, canonical_name, concept_type, category, obsidian_path, first_seen_at, last_seen_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?) "

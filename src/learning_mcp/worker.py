@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import tempfile
 from pathlib import Path
@@ -12,7 +13,8 @@ from . import jobs
 from .service import LearningService
 from .gemini_client import GeminiClient
 from .learning import DAILY_PROMPT, FEATURE_PROMPT, daily_packet, feature_packet, store_daily
-from .schemas import DAILY_JSON_SCHEMA, FEATURE_JSON_SCHEMA, validate_feature_review
+from .official_sources import lookup_official_sources
+from .schemas import DAILY_JSON_SCHEMA, FEATURE_JSON_SCHEMA, validate_daily, validate_feature_review
 
 
 def run_once(service: LearningService) -> bool:
@@ -26,17 +28,32 @@ def run_once(service: LearningService) -> bool:
         elif job["job_type"] == "daily_review":
             packet, refs = daily_packet(service.db, job["project_id"], payload["review_date"])
             with tempfile.TemporaryDirectory() as scratch:
-                raw = GeminiClient().generate(DAILY_PROMPT, packet, Path(scratch), DAILY_JSON_SCHEMA)
+                scratch_path = Path(scratch)
+                raw = GeminiClient().generate(DAILY_PROMPT, packet, scratch_path, DAILY_JSON_SCHEMA)
+                preview = validate_daily(raw, refs)
+                official_sources = lookup_official_sources(
+                    [{"key": concept["id"], "name": concept["name"], "kind": concept["type"]}
+                     for concept in preview["concepts"]],
+                    scratch_path,
+                )
             store_daily(service.db, job["project_id"], payload["review_date"],
-                        raw, refs, service.settings.obsidian_vault)
+                        raw, refs, service.settings.obsidian_vault, official_sources,
+                        service.settings.obsidian_base_dir)
         elif job["job_type"] == "feature_review":
             packet, refs = feature_packet(service.db, job["feature_id"])
             with tempfile.TemporaryDirectory() as scratch:
-                raw = GeminiClient().generate(FEATURE_PROMPT, packet, Path(scratch), FEATURE_JSON_SCHEMA)
-            review = validate_feature_review(raw, refs)
+                scratch_path = Path(scratch)
+                raw = GeminiClient().generate(FEATURE_PROMPT, packet, scratch_path, FEATURE_JSON_SCHEMA)
+                review = validate_feature_review(raw, refs)
+                official_sources = lookup_official_sources(
+                    [{"key": f"next-topic:{index}", "name": topic, "kind": "learning-topic"}
+                     for index, topic in enumerate(review["next_topics"])],
+                    scratch_path,
+                )
             service.save_feature_review(job["feature_id"], review["summary"], review["code_flow"],
                                         review["ownership"], review["alternatives"], review["weaknesses"],
-                                        review["next_topics"], verified=False)
+                                        review["next_topics"], verified=False,
+                                        official_sources=official_sources)
         else:
             raise ValueError(f"unsupported job type: {job['job_type']}")
     except Exception as exc:
@@ -52,7 +69,13 @@ def main() -> None:
     jobs.recover_stale(service.db, stale)
     try:
         last_schedule = 0.0
+        last_heartbeat = 0.0
         while True:
+            if time.monotonic() - last_heartbeat >= 10:
+                jobs.write_runtime_state(service.db, "worker-heartbeat", {
+                    "pid": os.getpid(), "state": "running",
+                })
+                last_heartbeat = time.monotonic()
             if time.monotonic() - last_schedule >= 60:
                 schedule_inactive_daily(service)
                 last_schedule = time.monotonic()

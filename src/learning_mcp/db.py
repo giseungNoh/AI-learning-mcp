@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS reviews (
     next_topics_json TEXT NOT NULL,            -- 후속 학습 주제 목록 (JSON)
     verified INTEGER NOT NULL DEFAULT 0,       -- 리뷰 검증 여부 (0: false, 1: true)
     obsidian_path TEXT,                        -- Obsidian 내보내기 상대 경로
+    official_sources_json TEXT NOT NULL DEFAULT '[]', -- 공식 기술 문서 링크
     created_at TEXT NOT NULL                   -- 생성 일시
 );
 
@@ -204,6 +205,12 @@ CREATE TABLE IF NOT EXISTS pending_questions (
     created_at TEXT NOT NULL,
     answered_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS runtime_state (
+    key TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -238,6 +245,8 @@ class Database:
             review_columns = {row["name"] for row in connection.execute("PRAGMA table_info(reviews)")}
             if "verification_ref" not in review_columns:
                 connection.execute("ALTER TABLE reviews ADD COLUMN verification_ref TEXT")
+            if "official_sources_json" not in review_columns:
+                connection.execute("ALTER TABLE reviews ADD COLUMN official_sources_json TEXT NOT NULL DEFAULT '[]'")
             connection.execute("UPDATE features SET review_state='reviewed' WHERE review_state='unreviewed' "
                                "AND EXISTS (SELECT 1 FROM reviews WHERE reviews.feature_id=features.id)")
             connection.execute("UPDATE features SET review_state='review_pending' "
@@ -263,4 +272,3 @@ class Database:
             raise
         finally:
             connection.close()
-

@@ -41,6 +41,12 @@ def main() -> None:
     sync.add_argument("--session-file", default="latest", help="Codex 세션 파일 경로 (기본: 'latest')")
     sync.add_argument("--phase", choices=("start", "update", "finish"), default="update", help="동기화 단계")
 
+    status = sub.add_parser("status", help="Show worker, queue, and active feature health")
+    status.add_argument("--project-root", help="프로젝트 Git 루트 경로")
+
+    install_worker = sub.add_parser("install-worker-autostart", help="Install and load the macOS worker LaunchAgent")
+    install_worker.add_argument("--no-load", action="store_true", help="plist만 설치하고 즉시 시작하지 않음")
+
     args = parser.parse_args()
     service = LearningService()
     
@@ -57,8 +63,12 @@ def main() -> None:
     elif args.command == "sync-codex":
         # Codex 세션 동기화 결과 출력
         _print(service.sync_codex_session(args.feature_id, args.session_file, args.phase))
+    elif args.command == "status":
+        _print(service.get_system_status(args.project_root))
+    elif args.command == "install-worker-autostart":
+        from .autostart import install_worker_launch_agent
+        _print(install_worker_launch_agent(service.settings, load=not args.no_load))
 
 
 if __name__ == "__main__":
     main()
-

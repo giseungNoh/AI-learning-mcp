@@ -63,7 +63,16 @@ class LearningPipelineTests(unittest.TestCase):
         self.assertTrue(packet["events"])
         ref = next(iter(refs))
         queued = self.service.request_daily_review(str(self.root), self.day)
-        with patch("learning_mcp.worker.GeminiClient") as client:
+        official = [{
+            "topic_key": "cs.concurrency.producer-consumer",
+            "title": "The Java Tutorials: Guarded Blocks",
+            "url": "https://docs.oracle.com/javase/tutorial/essential/concurrency/guardmeth.html",
+            "publisher": "Oracle",
+            "source_type": "official-documentation",
+            "reason": "생산자와 소비자 간 조건 대기를 설명한다.",
+        }]
+        with patch("learning_mcp.worker.GeminiClient") as client, \
+                patch("learning_mcp.worker.lookup_official_sources", return_value=official):
             client.return_value.generate.return_value = self.response(ref)
             self.assertTrue(run_once(self.service))
         with self.service.db.connect() as connection:
@@ -74,9 +83,19 @@ class LearningPipelineTests(unittest.TestCase):
         self.assertEqual(concepts, 2)
         daily = self.vault / row["obsidian_path"]
         self.assertTrue(daily.is_file())
-        self.assertIn("Producer Consumer", daily.read_text(encoding="utf-8"))
-        concept = self.vault / "dev/concepts/cs/concurrency/producer-consumer.md"
+        self.assertEqual(
+            row["obsidian_path"],
+            f"dev/wiki/learning/daily/{self.day[:4]}/{self.day}-repo.md",
+        )
+        daily_content = daily.read_text(encoding="utf-8")
+        self.assertIn("Producer Consumer", daily_content)
+        self.assertIn(
+            "[[dev/wiki/concepts/cs/concurrency/producer-consumer|Producer Consumer]]",
+            daily_content,
+        )
+        concept = self.vault / "dev/wiki/concepts/cs/concurrency/producer-consumer.md"
         self.assertTrue(concept.is_file())
+        self.assertIn("docs.oracle.com", concept.read_text(encoding="utf-8"))
         concept.write_text(concept.read_text(encoding="utf-8") + "\nMy personal note\n", encoding="utf-8")
         write_concept(self.vault, self.response(ref)["cs_concepts"][0] | {
             "id": "cs.concurrency.producer-consumer", "type": "cs", "connection": "두 번째 사용",
@@ -149,11 +168,29 @@ class LearningPipelineTests(unittest.TestCase):
         self.assertNotIn("# First", content)
         self.assertIn("Personal note", content)
 
+    def test_custom_obsidian_base_keeps_paths_relative_to_vault(self):
+        feature = self.service._feature(self.feature["id"])
+        base = Path("dev/learning-mcp")
+        relative, _ = export_review(
+            self.vault, feature, "---\ntype: feature-review\n---\n\n# Review", base
+        )
+        self.assertTrue(relative.startswith("dev/learning-mcp/projects/"))
+        concept = self.response("event:1")["cs_concepts"][0] | {
+            "id": "cs.concurrency.producer-consumer",
+            "type": "cs",
+            "connection": "사용 위치",
+        }
+        concept_path = write_concept(self.vault, concept, self.day, base)
+        self.assertEqual(
+            concept_path,
+            "dev/learning-mcp/concepts/cs/concurrency/producer-consumer.md",
+        )
+
     def test_short_concept_id_has_normal_filename(self):
         path = write_concept(self.vault, {"id": "dev.job-queue", "type": "dev", "name": "Job Queue",
                                           "explanation": "작업을 저장한다", "connection": "Worker가 사용한다",
                                           "related_concepts": [], "evidence_refs": []}, self.day)
-        self.assertEqual(path, "dev/concepts/development/general/job-queue.md")
+        self.assertEqual(path, "dev/wiki/concepts/development/general/job-queue.md")
         self.assertTrue((self.vault / path).is_file())
 
 

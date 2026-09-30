@@ -101,6 +101,14 @@ def render_review(feature: dict[str, Any], review: dict[str, Any], token_usage: 
             "",
             *[f"- {item}" for item in review["next_topics"]],
             "",
+            "## 공식 문서",
+            "",
+            *(
+                [f"- [{item['title']}]({item['url']}) — {item['publisher']}: {item['reason']}"
+                 for item in review.get("official_sources", [])]
+                or ["- 검색으로 확인된 공식 문서 없음"]
+            ),
+            "",
             "## 토큰 사용량",
             "",
             "| 항목 | 토큰 |",
@@ -112,7 +120,8 @@ def render_review(feature: dict[str, Any], review: dict[str, Any], token_usage: 
     return "\n".join(lines)
 
 
-def export_review(vault: Path, feature: dict[str, Any], content: str) -> tuple[str, str]:
+def export_review(vault: Path, feature: dict[str, Any], content: str,
+                  base_dir: Path = Path("dev/wiki")) -> tuple[str, str]:
     """
     렌더링된 마크다운 텍스트를 Obsidian Vault 내부 디렉토리에 파일로 저장합니다.
 
@@ -130,7 +139,7 @@ def export_review(vault: Path, feature: dict[str, Any], content: str) -> tuple[s
         ValueError: 대상 경로가 Vault 내부를 벗어나는 경우
     """
     filename = f"review-{_filename_slug(feature['title'])}.md"
-    relative = Path("dev/wiki/projects") / feature["project_slug"] / "features" / feature["id"] / filename
+    relative = base_dir / "projects" / feature["project_slug"] / "features" / feature["id"] / filename
     destination = (vault / relative).resolve()
     vault_resolved = vault.resolve()
     # 상위 경로에 Vault 루트가 포함되어 있는지 검증 (경로 탈출 방지)
@@ -158,4 +167,3 @@ def export_review(vault: Path, feature: dict[str, Any], content: str) -> tuple[s
     # 내용 검증용 SHA256 다이제스트 계산
     digest = hashlib.sha256(stored.encode("utf-8")).hexdigest()
     return str(relative), digest
-
